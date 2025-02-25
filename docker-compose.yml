@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  emailimap:
+    build:
+      context: ./app
+    container_name: emailimap
+    ports:
+      - "29732:8080"
