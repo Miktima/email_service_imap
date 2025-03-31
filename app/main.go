@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
-	_ "github.com/emersion/go-message/charset"
+	"github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
 )
 
@@ -26,6 +27,7 @@ func main() {
 	mux.HandleFunc("/login", LoginHandler(ctx))
 	mux.HandleFunc("/logout", LogoutHandler(ctx))
 	mux.HandleFunc("/mail", MailHandler(ctx))
+	mux.HandleFunc("/delete", DelmailHandler(ctx))
 	http.ListenAndServe(":8080", mux)
 
 }
@@ -50,8 +52,13 @@ func LoginHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		login := req.PostFormValue("login")
 		password := req.PostFormValue("password")
 
+		//для чтения кириллицы
+		options := &imapclient.Options{
+			WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
+		}
+
 		// Проходим авторизацию в почту и возвращаем текст с количеством писем
-		client, err := imapclient.DialTLS("imap.rambler.ru:993", nil)
+		client, err := imapclient.DialTLS("imap.rambler.ru:993", options)
 		if err != nil {
 			log.Fatalf("failed to dial IMAP server: %v", err)
 		}
@@ -108,7 +115,6 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		if err != nil {
 			log.Fatalf("Logout error. Err: %s", err)
 		}
-		log.Println("Client logged out :", ctx.Client)
 		// Формируем ответ
 		w.WriteHeader(http.StatusCreated)
 		w.Header().Set("Content-Type", "application/json")
@@ -145,7 +151,6 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			w.Write(jsonResp)
 			return
 		}
-		log.Println("Mail client:", ctx.Client)
 
 		w.WriteHeader(http.StatusCreated)
 		w.Header().Set("Content-Type", "application/json")
@@ -200,24 +205,18 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			// Print a few header fields
 			h := mr.Header
 			var subject string
-			if date, err := h.Date(); err != nil {
+			if _, err := h.Date(); err != nil {
 				log.Printf("failed to parse Date header field: %v", err)
-			} else {
-				log.Printf("Date: %v", date)
 			}
-			if to, err := h.AddressList("To"); err != nil {
+			if _, err := h.AddressList("To"); err != nil {
 				log.Printf("failed to parse To header field: %v", err)
-			} else {
-				log.Printf("To: %v", to)
 			}
-			if subject, err := h.Text("Subject"); err != nil {
+			if subject, err = h.Text("Subject"); err != nil {
 				log.Printf("failed to parse Subject header field: %v", err)
-			} else {
-				log.Printf("Subject: %v", subject)
 			}
 
 			// Process the message's parts
-			var body string
+			var body, filename string
 			for {
 				p, err := mr.NextPart()
 				if err == io.EOF {
@@ -231,11 +230,11 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 					// This is the message's text (can be plain-text or HTML)
 					b, _ := io.ReadAll(p.Body)
 					body = string(b)
-					log.Printf("Inline text: %v", body)
+					//log.Printf("Inline text: %v", body)
 				case *mail.AttachmentHeader:
 					// This is an attachment
-					filename, _ := h.Filename()
-					log.Printf("Attachment: %v", filename)
+					filename, _ = h.Filename()
+					//log.Printf("Attachment: %v", filename)
 				}
 			}
 
@@ -247,6 +246,7 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 				resp["status"] = "Ok"
 				resp["subject"] = subject
 				resp["body"] = body
+				resp["filename"] = filename
 			} else {
 				resp["status"] = "Error"
 				resp["message"] = fmt.Sprintf("ERROR: %v", err)
@@ -258,5 +258,59 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			}
 			w.Write(jsonResp)
 		}
+	}
+}
+
+func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		resp := make(map[string]string)
+		// Проверяем, что клиент определен
+		if ctx.Client == nil {
+			resp["status"] = "Error"
+			resp["message"] = "Client is down"
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.Write(jsonResp)
+			return
+		}
+		// Delete the last message
+		seqset := imap.SeqSetNum(1)
+
+		storeFlags := imap.StoreFlags{
+			Op:     imap.StoreFlagsAdd,
+			Flags:  []imap.Flag{imap.FlagDeleted},
+			Silent: true,
+		}
+
+		err := ctx.Client.Store(seqset, &storeFlags, nil).Close()
+		if err != nil {
+			log.Fatalf("STORE command failed: %v", err)
+		}
+
+		// Then delete it
+		//if err := ctx.Client.Expunge(); err != nil {
+		//	log.Fatal(err)
+		//}
+
+		// Формируем ответ
+		w.WriteHeader(http.StatusCreated)
+		w.Header().Set("Content-Type", "application/json")
+
+		if err == nil {
+			resp["status"] = "Ok"
+			resp["message"] = "The last message deleted "
+		} else {
+			resp["status"] = "Error"
+			resp["message"] = fmt.Sprintf("ERROR: %v", err)
+		}
+		jsonResp, err := json.Marshal(resp)
+		if err != nil {
+			log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+		}
+		w.Write(jsonResp)
 	}
 }
