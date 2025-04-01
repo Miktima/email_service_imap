@@ -15,8 +15,9 @@ import (
 )
 
 type Ctx struct {
-	Client *imapclient.Client
-	Mbox   *imap.SelectData
+	Client  *imapclient.Client
+	Mbox    *imap.SelectData
+	idleCmd *imapclient.IdleCommand
 }
 
 func main() {
@@ -55,6 +56,16 @@ func LoginHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		//для чтения кириллицы
 		options := &imapclient.Options{
 			WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
+			UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+				Expunge: func(seqNum uint32) {
+					log.Printf("message %v has been expunged", seqNum)
+				},
+				Mailbox: func(data *imapclient.UnilateralDataMailbox) {
+					if data.NumMessages != nil {
+						log.Printf("a new message has been received")
+					}
+				},
+			},
 		}
 
 		// Проходим авторизацию в почту и возвращаем текст с количеством писем
@@ -74,6 +85,16 @@ func LoginHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		ctx.Client = client
 		ctx.Mbox = selectedMbox
 		log.Printf("INBOX contains %v messages", selectedMbox.NumMessages)
+
+		// Start idling
+		idleCmd, err := client.Idle()
+		if err != nil {
+			log.Fatalf("IDLE command failed: %v", err)
+		}
+
+		ctx.Client = client
+		ctx.Mbox = selectedMbox
+		ctx.idleCmd = idleCmd
 
 		w.WriteHeader(http.StatusCreated)
 		w.Header().Set("Content-Type", "application/json")
@@ -110,8 +131,20 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			w.Write(jsonResp)
 			return
 		}
+
+		// Закрываем ожидание
+		err := ctx.idleCmd.Close()
+		if err != nil {
+			log.Fatalf("Close Idle command error. Err: %s", err)
+		}
+
+		err = ctx.idleCmd.Wait()
+		if err != nil {
+			log.Fatalf("Wait Idle command error. Err: %s", err)
+		}
+
 		// Выходим из аккаунта
-		err := ctx.Client.Logout().Wait()
+		err = ctx.Client.Logout().Wait()
 		if err != nil {
 			log.Fatalf("Logout error. Err: %s", err)
 		}
@@ -165,7 +198,18 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			}
 			w.Write(jsonResp)
 		} else {
-			// Send a FETCH command to fetch the message body
+			// Закрываем ожидание
+			err := ctx.idleCmd.Close()
+			if err != nil {
+				log.Fatalf("Close Idle command error. Err: %s", err)
+			}
+
+			err = ctx.idleCmd.Wait()
+			if err != nil {
+				log.Fatalf("Wait Idle command error. Err: %s", err)
+			}
+
+			// Send a FETCH command to fetch the message body of the first message
 			seqSet := imap.SeqSetNum(1)
 			bodySection := &imap.FetchItemBodySection{}
 			fetchOptions := &imap.FetchOptions{
@@ -242,6 +286,12 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 				log.Fatalf("FETCH command failed: %v", err)
 			}
 
+			// Start idling
+			ctx.idleCmd, err = ctx.Client.Idle()
+			if err != nil {
+				log.Fatalf("IDLE command failed: %v", err)
+			}
+
 			if err == nil {
 				resp["status"] = "Ok"
 				resp["subject"] = subject
@@ -277,40 +327,67 @@ func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			w.Write(jsonResp)
 			return
 		}
-		// Delete the last message
-		seqset := imap.SeqSetNum(1)
 
-		storeFlags := imap.StoreFlags{
-			Op:     imap.StoreFlagsAdd,
-			Flags:  []imap.Flag{imap.FlagDeleted},
-			Silent: true,
-		}
-
-		err := ctx.Client.Store(seqset, &storeFlags, nil).Close()
-		if err != nil {
-			log.Fatalf("STORE command failed: %v", err)
-		}
-
-		// Then delete it
-		//if err := ctx.Client.Expunge(); err != nil {
-		//	log.Fatal(err)
-		//}
-
-		// Формируем ответ
 		w.WriteHeader(http.StatusCreated)
 		w.Header().Set("Content-Type", "application/json")
-
-		if err == nil {
-			resp["status"] = "Ok"
-			resp["message"] = "The last message deleted "
-		} else {
+		// Ошибка, если сообщений в почте нет
+		if ctx.Mbox.NumMessages == 0 {
 			resp["status"] = "Error"
-			resp["message"] = fmt.Sprintf("ERROR: %v", err)
+			resp["message"] = "No messages in the mailbox"
+			log.Fatalf("No messages in the mailbox")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.Write(jsonResp)
+		} else {
+			// Закрываем ожидание
+			err := ctx.idleCmd.Close()
+			if err != nil {
+				log.Fatalf("Close Idle command error. Err: %s", err)
+			}
+
+			err = ctx.idleCmd.Wait()
+			if err != nil {
+				log.Fatalf("Wait Idle command error. Err: %s", err)
+			}
+
+			// Delete the first message
+			seqset := imap.SeqSetNum(1)
+
+			storeFlags := imap.StoreFlags{
+				Op:     imap.StoreFlagsAdd,
+				Flags:  []imap.Flag{imap.FlagDeleted},
+				Silent: true,
+			}
+
+			// Выставляем флаг
+			err = ctx.Client.Store(seqset, &storeFlags, nil).Close()
+			if err != nil {
+				log.Fatalf("STORE command failed: %v", err)
+			}
+
+			// Then delete it
+			ctx.Client.Expunge()
+
+			// Start idling
+			ctx.idleCmd, err = ctx.Client.Idle()
+			if err != nil {
+				log.Fatalf("IDLE command failed: %v", err)
+			}
+
+			if err == nil {
+				resp["status"] = "Ok"
+				resp["message"] = "The last message deleted "
+			} else {
+				resp["status"] = "Error"
+				resp["message"] = fmt.Sprintf("ERROR: %v", err)
+			}
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.Write(jsonResp)
 		}
-		jsonResp, err := json.Marshal(resp)
-		if err != nil {
-			log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-		}
-		w.Write(jsonResp)
 	}
 }
