@@ -29,7 +29,6 @@ func main() {
 	mux.HandleFunc("/logout", LogoutHandler(ctx))
 	mux.HandleFunc("/mail", MailHandler(ctx))
 	mux.HandleFunc("/delete", DelmailHandler(ctx))
-	mux.HandleFunc("/delete_all", DelAllmailHandler(ctx))
 	http.ListenAndServe(":8080", mux)
 
 }
@@ -381,91 +380,6 @@ func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			if err == nil {
 				resp["status"] = "Ok"
 				resp["message"] = "The message deleted "
-			} else {
-				resp["status"] = "Error"
-				resp["message"] = fmt.Sprintf("ERROR: %v", err)
-			}
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.Write(jsonResp)
-		}
-	}
-}
-
-func DelAllmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		resp := make(map[string]string)
-		// Проверяем, что клиент определен
-		if ctx.Client == nil {
-			resp["status"] = "Error"
-			resp["message"] = "Client is down"
-			w.WriteHeader(http.StatusCreated)
-			w.Header().Set("Content-Type", "application/json")
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.Write(jsonResp)
-			return
-		}
-
-		w.WriteHeader(http.StatusCreated)
-		w.Header().Set("Content-Type", "application/json")
-		// Ошибка, если сообщений в почте нет
-		if ctx.Mbox.NumMessages == 0 {
-			resp["status"] = "Error"
-			resp["message"] = "No messages in the mailbox"
-			log.Fatalf("No messages in the mailbox")
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.Write(jsonResp)
-		} else {
-			// Закрываем ожидание
-			err := ctx.idleCmd.Close()
-			if err != nil {
-				log.Fatalf("Close Idle command error. Err: %s", err)
-			}
-
-			err = ctx.idleCmd.Wait()
-			if err != nil {
-				log.Fatalf("Wait Idle command error. Err: %s", err)
-			}
-
-			// Choose all messages
-			seqset := imap.SeqSetNum(1)
-			for im := 2; im <= int(ctx.Mbox.NumMessages); im++ {
-				seqset.AddNum(uint32(im))
-			}
-
-			storeFlags := imap.StoreFlags{
-				Op:     imap.StoreFlagsAdd,
-				Flags:  []imap.Flag{imap.FlagDeleted},
-				Silent: true,
-			}
-
-			fmt.Println("SEQSET: ", seqset)
-			// Выставляем флаг
-			err = ctx.Client.Store(seqset, &storeFlags, nil).Close()
-			if err != nil {
-				log.Fatalf("STORE command failed: %v", err)
-			}
-
-			// Then delete it
-			ctx.Client.Expunge()
-
-			// Start idling
-			ctx.idleCmd, err = ctx.Client.Idle()
-			if err != nil {
-				log.Fatalf("IDLE command failed: %v", err)
-			}
-
-			if err == nil {
-				resp["status"] = "Ok"
-				resp["message"] = "The last message deleted "
 			} else {
 				resp["status"] = "Error"
 				resp["message"] = fmt.Sprintf("ERROR: %v", err)
