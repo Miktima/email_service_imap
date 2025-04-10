@@ -29,6 +29,7 @@ func main() {
 	mux.HandleFunc("/logout", LogoutHandler(ctx))
 	mux.HandleFunc("/mail", MailHandler(ctx))
 	mux.HandleFunc("/delete", DelmailHandler(ctx))
+	mux.HandleFunc("/status", StatusHandler(ctx))
 	http.ListenAndServe(":8080", mux)
 
 }
@@ -46,6 +47,7 @@ func LoginHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -129,6 +131,21 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(jsonResp)
+			return
+		}
+		//Проверяем, что IDLE включен
+		if ctx.idleCmd == nil {
+			resp["status"] = "Error"
+			resp["message"] = "IDLE already closed"
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -149,6 +166,10 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		if err != nil {
 			log.Fatalf("Logout error. Err: %s", err)
 		}
+
+		// Обнуляем клиента
+		ctx.Client = nil
+
 		// Формируем ответ
 		w.WriteHeader(http.StatusCreated)
 		w.Header().Set("Content-Type", "application/json")
@@ -172,6 +193,7 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		resp := make(map[string]string)
+		//fmt.Println("ctx.Client:", ctx.Client)
 		// Проверяем, что клиент определен
 		if ctx.Client == nil {
 			resp["status"] = "Error"
@@ -182,6 +204,22 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(jsonResp)
+			return
+		}
+
+		//Проверяем, что IDLE включен
+		if ctx.idleCmd == nil {
+			resp["status"] = "Error"
+			resp["message"] = "IDLE already closed"
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -325,6 +363,22 @@ func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(jsonResp)
+			return
+		}
+
+		//Проверяем, что IDLE включен
+		if ctx.idleCmd == nil {
+			resp["status"] = "Error"
+			resp["message"] = "IDLE already closed"
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -390,5 +444,35 @@ func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 			}
 			w.Write(jsonResp)
 		}
+	}
+}
+
+func StatusHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		resp := make(map[string]string)
+		// Проверяем метод запроса - для логина принимаем только GET
+		if req.Method != http.MethodGet {
+			resp["status"] = "Error"
+			resp["message"] = "Method not allowed"
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(jsonResp)
+			return
+		}
+
+		//fmt.Println("IDL command:", ctx.idleCmd)
+
+		resp["status"] = "Ok"
+		resp["message"] = "Status OK"
+		jsonResp, err := json.Marshal(resp)
+		if err != nil {
+			log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+		}
+		w.Write(jsonResp)
 	}
 }
