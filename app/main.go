@@ -41,13 +41,25 @@ func LoginHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		if req.Method != http.MethodPost {
 			resp["status"] = "Error"
 			resp["message"] = "Method not allowed"
-			w.WriteHeader(http.StatusCreated)
 			w.Header().Set("Content-Type", "application/json")
 			jsonResp, err := json.Marshal(resp)
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
 			w.WriteHeader(http.StatusBadRequest)
+			w.Write(jsonResp)
+			return
+		}
+		// Проверяем, что клиент не определен
+		if ctx.Client != nil {
+			resp["status"] = "Error"
+			resp["message"] = "Client is active: login completed"
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			jsonResp, err := json.Marshal(resp)
+			if err != nil {
+				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
+			}
 			w.Write(jsonResp)
 			return
 		}
@@ -122,30 +134,15 @@ func LogoutHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		resp := make(map[string]string)
 		// Проверяем, что клиент определен
-		if ctx.Client == nil {
+		if ctx.Client == nil || ctx.idleCmd == nil {
 			resp["status"] = "Error"
-			resp["message"] = "Client is down"
-			w.WriteHeader(http.StatusCreated)
+			resp["message"] = "Client is not active"
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
 			jsonResp, err := json.Marshal(resp)
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(jsonResp)
-			return
-		}
-		//Проверяем, что IDLE включен
-		if ctx.idleCmd == nil {
-			resp["status"] = "Error"
-			resp["message"] = "IDLE already closed"
-			w.WriteHeader(http.StatusCreated)
-			w.Header().Set("Content-Type", "application/json")
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -195,31 +192,15 @@ func MailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		resp := make(map[string]string)
 		//fmt.Println("ctx.Client:", ctx.Client)
 		// Проверяем, что клиент определен
-		if ctx.Client == nil {
+		if ctx.Client == nil || ctx.idleCmd == nil {
 			resp["status"] = "Error"
-			resp["message"] = "Client is down"
-			w.WriteHeader(http.StatusCreated)
+			resp["message"] = "Client is not active"
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
 			jsonResp, err := json.Marshal(resp)
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(jsonResp)
-			return
-		}
-
-		//Проверяем, что IDLE включен
-		if ctx.idleCmd == nil {
-			resp["status"] = "Error"
-			resp["message"] = "IDLE already closed"
-			w.WriteHeader(http.StatusCreated)
-			w.Header().Set("Content-Type", "application/json")
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -354,31 +335,15 @@ func DelmailHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		resp := make(map[string]string)
 		// Проверяем, что клиент определен
-		if ctx.Client == nil {
+		if ctx.Client == nil || ctx.idleCmd == nil {
 			resp["status"] = "Error"
-			resp["message"] = "Client is down"
-			w.WriteHeader(http.StatusCreated)
+			resp["message"] = "Client is not active"
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
 			jsonResp, err := json.Marshal(resp)
 			if err != nil {
 				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
 			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(jsonResp)
-			return
-		}
-
-		//Проверяем, что IDLE включен
-		if ctx.idleCmd == nil {
-			resp["status"] = "Error"
-			resp["message"] = "IDLE already closed"
-			w.WriteHeader(http.StatusCreated)
-			w.Header().Set("Content-Type", "application/json")
-			jsonResp, err := json.Marshal(resp)
-			if err != nil {
-				log.Fatalf("Error happened in JSON marshal. Err: %s", err)
-			}
-			w.WriteHeader(http.StatusBadRequest)
 			w.Write(jsonResp)
 			return
 		}
@@ -454,7 +419,6 @@ func StatusHandler(ctx *Ctx) func(http.ResponseWriter, *http.Request) {
 		if req.Method != http.MethodGet {
 			resp["status"] = "Error"
 			resp["message"] = "Method not allowed"
-			w.WriteHeader(http.StatusCreated)
 			w.Header().Set("Content-Type", "application/json")
 			jsonResp, err := json.Marshal(resp)
 			if err != nil {
